@@ -1,0 +1,331 @@
+---
+title: "Covid-19"
+output: html_document
+date: '2022-04-28'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Task 1
+#### Task1 Part 1: Loading the data sets
+
+```{r}
+countries <- read.csv('Countries.csv', header=TRUE)
+covid19 <- read.csv('Covid19.csv', header=TRUE)
+recovered <- read.csv('Recovered.csv', header=TRUE)
+tests <- read.csv('Tests.csv', header=TRUE)
+```
+
+#### Loadign some libraries
+
+```{r}
+library(tidyverse)
+library(caret)
+library(stringr)
+library(lubridate)
+```
+
+### 1.Tidying Recovered.csv
+
+#### Task 1 Part 2
+```{r}
+
+country_rec <- recovered$Country.Region
+date_rec <- colnames(recovered)[-1]
+
+# run only one time. rerunning it changes the names
+date_tidy <- function(x){
+  str_sub(x, 1 , 1) <- ""
+  str_sub(x, 5, 5) <- "-"
+  str_sub(x, 8, 8) <- "-"
+  
+  return(x)
+}
+
+date_rec <- unlist(lapply(date_rec, date_tidy))
+
+# Task 1 Part 3 for recovered
+colnames(recovered) <- c('Country', date_rec)
+
+# Task 1 part 4
+date_seq <- seq(ymd('2020-01-01'),ymd('2020-05-05'),by='days')
+
+# Task 1 part 6 for recovered.csv1
+rec_before <- matrix(0, nrow=nrow(recovered), ncol=21)
+rec_before <- data.frame(rec_before)
+colnames(rec_before) <- date_seq[1:21]
+
+rec_before <- rec_before %>% 
+  mutate(Country = recovered$Country) %>%
+  relocate(Country)
+
+rec_comp <- left_join(rec_before, recovered, by='Country')
+
+# vectorize
+rec_new <- rec_comp %>% select(-Country) %>% unlist %>% unname
+countries_rec <- rec_comp$Country %>% rep(each=length(date_seq))
+date_rec <- rep(date_seq, times=nrow(rec_comp))
+```
+
+#### Changing Column Names in Recovered
+
+```{r}
+recovered_new <- tibble(Country=countries_rec, Date=date_rec, Recovered=rec_new)
+# write.csv(recovered_new, 'recovered.csv')
+```
+
+#### Making Recovered compatible with Covid19
+
+```{r}
+# recovered has two additional countries that we have no info about on the other data sets
+idx <- which(!(unique(recovered_new$Country) %in% unique(covid19$location)))
+(missing_countries <- unique(recovered_new$Country)[idx])
+                                                   
+recovered_new <- recovered_new %>% filter(!(Country %in% missing_countries))
+
+# Now the other way around, adding missing countries from covid19 to recovered
+idx2 <- which(!(unique(covid19$location) %in% unique(recovered_new$Country)))
+missing_countries2 <- unique(covid19$location)[idx2] %>% rep(each=length(date_seq))
+missing_date <- rep(date_seq, times=length(idx2))
+
+recovered_new <- recovered_new %>% add_row(Country=missing_countries2, Date=missing_date, Recovered=0)
+```
+
+#### Removing additional rows 
+
+#### Task 1 Part 3 for Covid19.csv
+```{r}
+
+colnames(covid19) <- c('Code', 'Country', 'Continent', 'Date', 'NewCases', 'NewDeaths')
+covid19$Date <- ymd(covid19$Date)
+
+#recovered_new <- semi_join(recovered_new, covid19, by=c('Country', 'Date')) %>%
+#  arrange(Country, Date)
+```
+
+### 2.Tidying Tests.csv
+
+```{r}
+
+# Task 1 Part 3 for Tests.csv
+colnames(tests) <- c('Code', 'Date', 'NewTests')
+tests$Date <- ymd(tests$Date)
+
+idx <- which(!(unique(covid19$Code) %in% unique(tests$Code)))
+missing_codes <- unique(covid19$Code)[idx] %>% rep(each=length(date_seq))
+missing_date <- rep(date_seq, times=length(idx))
+
+# Task 1 part 6 for tests.csv
+tests_new <- tests %>% add_row(Code=missing_codes, Date=missing_date, NewTests=0)
+```
+
+#### Removing additional rows 
+
+```{r}
+#tests_new <- semi_join(tests_new, covid19, by=c('Code','Date')) %>%
+#  arrange(Code, Date)
+```
+
+
+### 3. Tidying Countries
+
+#### Task 1 part 3 for Countries.csv
+```{r}
+colnames(countries) <- c('Code', 'Country', 'Population', 'GDP', 'GDPCapita')
+countries_new <- countries[rep(seq_len(nrow(countries)), each=length(date_seq)),] %>%
+  mutate(Date = rep(date_seq, times=nrow(countries)))
+
+#countries_new <- semi_join(countries_new, covid19, by=c('Code', 'Date')) %>% 
+#  arrange(Code, Date)
+```
+
+### 4. Adding The Columns
+
+#### Task 1 part 5 and 7
+```{r}
+
+covid19_new <- covid19 %>% left_join(tests_new, by=c('Code', 'Date')) %>%
+  left_join(recovered_new, by=c('Country', 'Date')) %>%
+  left_join(countries, by=c('Code', 'Country')) %>%
+  select(Code, Country, Date, NewTests, Continent, NewCases, NewDeaths, Recovered,
+         Population, GDP, GDPCapita) %>%
+  as_tibble %>%
+  arrange(Code) %>%
+  mutate(
+    Month = month(Date),
+    Week = week(Date)
+  )
+
+covid19_new %>% head
+```
+
+
+## Task 2
+
+#### Task 2 Part 1 and 2 and 3
+```{r} 
+# mutating new variables
+covid19_new <- covid19_new %>% arrange(Country, Date) %>%
+  group_by(Country) %>%
+  mutate(
+    CumCases = cumsum(NewCases),
+    CumDeaths = cumsum(NewDeaths),
+    CumRecovered = cumsum(Recovered),
+    CumTests = cumsum(NewTests),
+    Active = CumCases - (CumDeaths+CumRecovered),
+    FatalityRate = CumDeaths/CumCases,
+    Cases_1M_Pop = CumCases*(10^6) / Population,
+    Deaths_1M_Pop = CumDeaths*10^6 / Population,
+    Recovered_1M_Pop = CumRecovered*10^6 / Population,
+    Tests_1M_Pop = CumTests*10^6 / Population
+    )
+```
+
+#### Task 2 Part 4, 5, 6,6 7, 8, 9 ,10
+```{r}
+# Part 4
+# find the day with the highest reported death toll across the world
+(day_high <- covid19_new %>% group_by(Country) %>%
+  summarize(max_deaths = max(NewDeaths),
+            date = Date[which(NewDeaths == max(NewDeaths))[1]]))
+
+# Part 5
+#	Build a graph to show how the cumulative data of (Infected Cases, Deaths, Recovered, Tests)
+# change over the time for the whole world collectively.
+covid19_new %>% group_by(Date) %>%
+  mutate(
+    SumCases = sum(NewCases),
+    SumTests = sum(NewTests),
+    SumDeaths = sum(NewDeaths),
+    SumRecovered = sum(Recovered)) %>%
+  ggplot(mapping = aes(x = Date)) + 
+  geom_line(mapping = aes(y = log(SumCases), color='Sum of Cases')) +
+  geom_line(mapping = aes(y = log(SumTests), color='Sum of Tests')) +
+  geom_line(mapping = aes(y = log(SumDeaths), color='Sum of Deaths')) +
+  geom_line(mapping = aes(y = log(SumRecovered), color='Sum of Recovered')) +
+  ylab('Log of cumulative counts') +
+  labs('Type of Count')
+
+# Part 6
+# Extract the data corresonding to the last day (05/05/2020) and save it in a 
+#separate dataframe and name it “lastDay_data”.
+lastDay_data <- covid19_new %>% filter(Date==ymd(20200505))
+
+# Part 7
+# top10activeW, top10casesW, top10fatalityW, top10testsMW
+top10activeW <- lastDay_data %>% arrange(Active) %>% head(10)
+top10casesW <- lastDay_data %>% arrange(CumCases) %>% head(10)
+top10fatalityW <- lastDay_data %>% arrange(FatalityRate) %>% head(10)
+top10testsW <- lastDay_data %>% arrange(CumTests) %>% head(10)
+
+# Part 8
+# Based on the data of the last day, print the up to date confirmed, death, recovered cases as well as the tests for every continent.
+
+lastDay_data %>% group_by(Continent) %>%
+  summarize(
+    confirmed_cases = sum(NewCases),
+    death_cases = sum(NewDeaths), 
+    recovered_cases = sum(Recovered),
+    tests = sum(NewTests)
+  )
+
+# Part 9
+#	Build a graph to show the total number of cases over the time for the top 10 countries that have been obtained in question 7 (Use log for Y axis for better presentation).
+
+covid19_new %>% group_by(Country) %>% filter(Country %in% top10casesW$Country) %>%
+  ggplot() +
+  geom_line(aes(x = Date, y = log(NewCases), color=Country))
+
+
+# Part 10
+#	Build a graph for the top 10 countries with current highest active cases which was obtained previously in question 7. The graph should have one subgraph (i.e., using facet function) for each of these countries, every subgraph should show how the new cases, new deaths, and new recovered cases were changing over the time (Use log for Y axis for better presentation, Use different colour to distinguish between new cases, deaths, and recovered).
+
+covid19_new %>% group_by(Country) %>% filter(Country %in% top10activeW$Country) %>%
+  ggplot() +
+  facet_wrap(~ Country, nrow=4) +
+  geom_line(mapping = aes(y = log(NewCases),x = Date, color='Sum of Cases')) +
+  geom_line(mapping = aes(y = log(NewTests),x = Date, color='Sum of Tests')) +
+  geom_line(mapping = aes(y = log(NewDeaths),x = Date, color='Sum of Deaths')) +
+  geom_line(mapping = aes(y = log(Recovered),x = Date, color='Sum of Recovered'))
+```
+
+
+## Task 3
+####  Task 3 Part 1, 2, 3, 4, 5
+```{r}
+# Part 1
+#	Based on the data of the last day, that you have extracted in the previous task, create a separate dataframe named “cor_data” with the data of these variables (CumCases, CumTests, Population, GDP, GDPCapita).
+cor_data <- lastDay_data %>% ungroup %>%
+  select(CumCases, CumTests, Population, GDP, GDPCapita)
+
+
+# Part 2
+# Compute the correlation matrix between the variables of the “cor_data” and visualise this correlation matrix.
+# install.packages("ggcorrplot")
+library(ggcorrplot)
+
+corr <- round(cor(cor_data), 2)
+
+ggcorrplot(corr, method='square', type='lower',
+           ggtheme = ggplot2::theme_light,
+           outline.color = 'white', 
+           colors = c('#2b2d42', '#edf2f4', '#ef233c'))
+
+# Part 3
+#	Divide the cor_data into training and testing, where training data represent 65% of the number of rows.
+# To make the data random, we shuffle the rows. 
+train_ind <- sample(nrow(cor_data), round(0.65*nrow(cor_data)), replace=F)
+train_data <- cor_data[train_ind,]
+test_data <- cor_data[-train_ind,]
+
+# Part 4
+#	Train a linear regression model to predict cumulative cases from the GDP of the countries. Then, evaluate this model on the test data and print the root mean square error value.
+linear_fit <- lm(CumCases ~ GDP, data = train_data)
+CumCases_pred <- predict.lm(linear_fit, test_data[,-1]) 
+(rmse <- sqrt(mean((test_data$CumCases - CumCases_pred)^2)))
+
+# Part 5
+linear_fit2 <- lm(CumCases ~ CumTests + Population + GDPCapita, data = train_data)
+CumCases_pred2 <- predict.lm(linear_fit2, test_data[,-1]) 
+(rmse2 <- sqrt(mean((test_data$CumCases - CumCases_pred2)^2)))
+
+```
+
+## Task 4
+
+### Objectives:
+The data available here is only related to the first wave of the Covid19 pandemic. In order to have an up-to-date understanding and interpretation of the trends in the pandemic world-wide, we need to have access to the data covering the pandemic after March 5th, 2020. 
+
+### List of data sources to augment the existing data
+There are several sources that we can gather the data from such as WHO, CDC, or NHS But the important question is what kind of data are we going to use. After the first wave, some new features have become important that wasn't available in the initial data. These informations include covid19 variants,  vaccinations, and hospital admissions. We can gain a lot of useful information by adding these featurse to our data and visualizing them.
+
+### Set of figures/tables to show in the dashboard
+1. Trend of daily death tolls/new cases world-wide. 
+2. Countries with highest death tolls world-wide. 
+3. Table of vaccination statistics in the country/world-wide
+4. Trend of various vaccines' effect
+5. Trend of people hospitalized after getting infected
+6. Trend of each covid19 variant's new cases
+
+
+### Analysis strategy
+We can analyze the daily death tolls or new cases of corona virus world-wide in various ways, such as based on their nationality, type of vaccination they might have used, etc. 
+
+We can also group the data based on the type of variant, or country as before. In order to have a better understanding, we can create new variables by performing calculations on existing variables. Such as the rate of daily hospitalized cases (Hospitalized divided by New Cases). 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
